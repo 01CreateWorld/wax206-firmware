@@ -5,7 +5,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04 # 继续保持 22.04 避开新版 Ubuntu 的 Python distutils 报错
+    runs-on: ubuntu-22.04
 
     steps:
     - name: Checkout Code
@@ -19,19 +19,21 @@ jobs:
 
     - name: Clone OpenWrt Official Source (Latest)
       run: |
-        # 移除固定分支参数，直接拉取最新的 master (包含 OpenWrt 25 源码)
         git clone https://github.com/openwrt/openwrt.git openwrt
 
     - name: Add Passwall Feeds & Apply 256M Patch
       working-directory: ./openwrt
       run: |
-        # 1. 引入 Passwall 源
-        echo "src-git passwall_packages https://github.com/xiaorouji/openwrt-passwall-packages.git;main" >> feeds.conf.default
-        echo "src-git passwall https://github.com/xiaorouji/openwrt-passwall.git;main" >> feeds.conf.default
+        # 1. 引入最新的 Passwall 源
+        echo "src-git passwall_packages https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git;main" >> feeds.conf.default
+        echo "src-git passwall_luci https://github.com/Openwrt-Passwall/openwrt-passwall.git;main" >> feeds.conf.default
         ./scripts/feeds update -a
+        
+        # 2. 解决最新源码库的依赖冲突（强制删除官方自带版本）
+        rm -rf feeds/packages/net/{xray-core,v2ray-geodata,sing-box,chinadns-ng,dns2socks,hysteria,ipt2socks,microsocks,naiveproxy,shadowsocks-rust,shadowsocksr-libev,simple-obfs,tcping,v2ray-plugin,xray-plugin,geoview,shadow-tls}
         ./scripts/feeds install -a
 
-        # 2. 动态查找 DTS 文件并应用 256M 扩容（适配新版源码的目录结构）
+        # 3. 动态查找 DTS 文件并应用 256M 扩容
         DTS_FILE=$(find target/linux/mediatek -name "mt7622-netgear-wax206.dts")
         echo "Found DTS file at: $DTS_FILE"
         
