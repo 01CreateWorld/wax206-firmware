@@ -1,11 +1,11 @@
-name: Build WAX206 256M Passwall Firmware
+name: Build WAX206 256M Passwall Firmware (Latest)
 
 on:
-  workflow_dispatch: # 允许在网页端手动点击运行
+  workflow_dispatch:
 
 jobs:
   build:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04 # 继续保持 22.04 避开新版 Ubuntu 的 Python distutils 报错
 
     steps:
     - name: Checkout Code
@@ -17,9 +17,10 @@ jobs:
         sudo apt install -y build-essential clang flex bison g++ gawk gcc-multilib g++-multilib \
         gettext git libncurses5-dev libssl-dev python3-distutils rsync unzip zlib1g-dev file wget curl
 
-    - name: Clone OpenWrt Official Source
+    - name: Clone OpenWrt Official Source (Latest)
       run: |
-        git clone -b openwrt-23.05 https://github.com/openwrt/openwrt.git openwrt
+        # 移除固定分支参数，直接拉取最新的 master (包含 OpenWrt 25 源码)
+        git clone https://github.com/openwrt/openwrt.git openwrt
 
     - name: Add Passwall Feeds & Apply 256M Patch
       working-directory: ./openwrt
@@ -30,15 +31,17 @@ jobs:
         ./scripts/feeds update -a
         ./scripts/feeds install -a
 
-        # 2. 修改 DTS 设备树实现 256M 扩容
-        sed -i 's/<0x580000 0x2800000>/<0x580000 0xfa80000>/g' target/linux/mediatek/dts/mt7622-netgear-wax206.dts
-        sed -i '/partition@2d80000/,/};/d' target/linux/mediatek/dts/mt7622-netgear-wax206.dts
-        sed -i '/partition@5580000/,/};/d' target/linux/mediatek/dts/mt7622-netgear-wax206.dts
+        # 2. 动态查找 DTS 文件并应用 256M 扩容（适配新版源码的目录结构）
+        DTS_FILE=$(find target/linux/mediatek -name "mt7622-netgear-wax206.dts")
+        echo "Found DTS file at: $DTS_FILE"
+        
+        sed -i 's/<0x580000 0x2800000>/<0x580000 0xfa80000>/g' $DTS_FILE
+        sed -i '/partition@2d80000/,/};/d' $DTS_FILE
+        sed -i '/partition@5580000/,/};/d' $DTS_FILE
 
     - name: Configure and Compile
       working-directory: ./openwrt
       run: |
-        # 将仓库根目录的 .config 文件复制进源码目录
         cp ../.config .config
         make defconfig
         make download -j8
@@ -47,5 +50,5 @@ jobs:
     - name: Upload Firmware Artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: WAX206-256M-Firmware
+        name: WAX206-256M-Firmware-Latest
         path: openwrt/bin/targets/mediatek/mt7622/*
