@@ -1,0 +1,51 @@
+name: Build WAX206 256M Passwall Firmware
+
+on:
+  workflow_dispatch: # 允许在网页端手动点击运行
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Install Build Dependencies
+      run: |
+        sudo apt update
+        sudo apt install -y build-essential clang flex bison g++ gawk gcc-multilib g++-multilib \
+        gettext git libncurses5-dev libssl-dev python3-distutils rsync unzip zlib1g-dev file wget curl
+
+    - name: Clone OpenWrt Official Source
+      run: |
+        git clone -b openwrt-23.05 https://github.com/openwrt/openwrt.git openwrt
+
+    - name: Add Passwall Feeds & Apply 256M Patch
+      working-directory: ./openwrt
+      run: |
+        # 1. 引入 Passwall 源
+        echo "src-git passwall_packages https://github.com/xiaorouji/openwrt-passwall-packages.git;main" >> feeds.conf.default
+        echo "src-git passwall https://github.com/xiaorouji/openwrt-passwall.git;main" >> feeds.conf.default
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
+
+        # 2. 修改 DTS 设备树实现 256M 扩容
+        sed -i 's/<0x580000 0x2800000>/<0x580000 0xfa80000>/g' target/linux/mediatek/dts/mt7622-netgear-wax206.dts
+        sed -i '/partition@2d80000/,/};/d' target/linux/mediatek/dts/mt7622-netgear-wax206.dts
+        sed -i '/partition@5580000/,/};/d' target/linux/mediatek/dts/mt7622-netgear-wax206.dts
+
+    - name: Configure and Compile
+      working-directory: ./openwrt
+      run: |
+        # 将仓库根目录的 .config 文件复制进源码目录
+        cp ../.config .config
+        make defconfig
+        make download -j8
+        make -j$(nproc) V=s
+
+    - name: Upload Firmware Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: WAX206-256M-Firmware
+        path: openwrt/bin/targets/mediatek/mt7622/*
