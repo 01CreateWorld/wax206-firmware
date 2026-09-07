@@ -37,7 +37,7 @@ jobs:
         
         # 2. 替换 OpenWrt 自带的低版本 Golang 为专为插件维护的高版本工具链
         rm -rf feeds/packages/lang/golang
-        git clone https://github.com/sbwml/packages_lang_golang -b master feeds/packages/lang/golang
+        git clone https://github.com/sbwml/packages_lang_golang feeds/packages/lang/golang
         
         # 3. 强制删除阻碍编译的非核心边缘组件 (如引发 Go 1.25 报错的 geoview)
         rm -rf feeds/passwall_packages/geoview
