@@ -1,5 +1,8 @@
 name: Build WAX206 256M Pure Firmware (OpenWrt 25)
 
+env:
+  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
+
 on:
   workflow_dispatch:
 
@@ -31,12 +34,16 @@ jobs:
     - name: Apply 256M Partition Patch
       working-directory: ./openwrt
       run: |
-        # 动态查找 DTS 文件并应用 256M 扩容
+        # 1. 扩大内核设备树 (DTS) 的物理分区边界
         DTS_FILE=$(find target/linux/mediatek -name "mt7622-netgear-wax206.dts")
-        echo "Modifying DTS: $DTS_FILE"
         sed -i 's/<0x580000 0x2800000>/<0x580000 0xfa80000>/g' $DTS_FILE
         sed -i '/partition@2d80000/,/};/d' $DTS_FILE
         sed -i '/partition@5580000/,/};/d' $DTS_FILE
+        
+        # 2. 解除镜像打包体积限制 (解决 sysupgrade 依然是 17M 的核心关键！)
+        # OpenWrt 官方源码中 WAX206 默认的 IMAGE_SIZE 为 40960k (40MB)
+        # 必须将其替换为 256512k (对应物理空间的 0xfa80000)，否则文件系统依然会被截断
+        find target/linux/mediatek/image -type f -exec sed -i 's/40960k/256512k/g' {} +
 
     - name: Generate Config & Download
       working-directory: ./openwrt
@@ -48,7 +55,6 @@ jobs:
     - name: Compile Pure Firmware
       working-directory: ./openwrt
       run: |
-        # 多线程编译，失败时自动切单线程输出日志
         make -j$(nproc) || make -j1 V=s
 
     - name: Upload Firmware Artifacts
