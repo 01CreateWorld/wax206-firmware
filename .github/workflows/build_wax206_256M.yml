@@ -1,4 +1,4 @@
-name: Build WAX206 256M Pure Firmware (OpenWrt 25)
+name: Build WAX206 256M (Professional Fix)
 
 env:
   ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
@@ -25,34 +25,51 @@ jobs:
       run: |
         git clone https://github.com/openwrt/openwrt.git openwrt
 
-    - name: Update Standard Feeds
+    - name: Update Feeds & Download Source
       working-directory: ./openwrt
       run: |
         ./scripts/feeds update -a
         ./scripts/feeds install -a
-
-    - name: Apply 256M Partition Patch
-      working-directory: ./openwrt
-      run: |
-        # 1. 扩大内核设备树 (DTS) 的物理分区边界
-        DTS_FILE=$(find target/linux/mediatek -name "mt7622-netgear-wax206.dts")
-        sed -i 's/<0x580000 0x2800000>/<0x580000 0xfa80000>/g' $DTS_FILE
-        sed -i '/partition@2d80000/,/};/d' $DTS_FILE
-        sed -i '/partition@5580000/,/};/d' $DTS_FILE
-        
-        # 2. 解除镜像打包体积限制 (解决 sysupgrade 依然是 17M 的核心关键！)
-        # OpenWrt 官方源码中 WAX206 默认的 IMAGE_SIZE 为 40960k (40MB)
-        # 必须将其替换为 256512k (对应物理空间的 0xfa80000)，否则文件系统依然会被截断
-        find target/linux/mediatek/image -type f -exec sed -i 's/40960k/256512k/g' {} +
-
-    - name: Generate Config & Download
-      working-directory: ./openwrt
-      run: |
         cp ../.config .config
         make defconfig
         make download -j8
 
-    - name: Compile Pure Firmware
+    - name: Inject 256M Patch (Core Fix)
+      working-directory: ./openwrt
+      run: |
+        echo "1. 解除打包体积限制..."
+        sed -i 's/40960k/256512k/g' target/linux/mediatek/image/mt7622.mk
+        
+        echo "2. 提前解压 Linux 内核源码 (这是之前失败的关键)..."
+        make target/linux/prepare -j$(nproc)
+        
+        echo "3. 动态寻找解压后的 DTS 并应用扩容补丁..."
+        DTS_FILE=$(find build_dir -path "*/arch/arm64/boot/dts/mediatek/mt7622-netgear-wax206.dts" | head -n 1)
+        
+        # 增加极其严格的防静默失败校验
+        if [ -z "$DTS_FILE" ]; then
+          echo "致命错误：在内核源码中找不到 WAX206 的 DTS 文件！扩容将失败！"
+          exit 1
+        fi
+        
+        echo "成功找到内核 DTS 路径: $DTS_FILE"
+        
+        # 精确替换分区边界 (去掉尖括号以防内核源码格式变动)
+        sed -i 's/0x580000 0x2800000/0x580000 0xfa80000/g' "$DTS_FILE"
+        
+        # 删除备用分区节点
+        sed -i '/partition@2d80000/,/};/d' "$DTS_FILE"
+        sed -i '/partition@5580000/,/};/d' "$DTS_FILE"
+        
+        # 终极校验：检查修改是否真的写进去了
+        if ! grep -q "0xfa80000" "$DTS_FILE"; then
+          echo "致命错误：DTS 文件修改失败！"
+          exit 1
+        fi
+        
+        echo "DTS 扩容补丁完美注入！"
+
+    - name: Compile Firmware
       working-directory: ./openwrt
       run: |
         make -j$(nproc) || make -j1 V=s
