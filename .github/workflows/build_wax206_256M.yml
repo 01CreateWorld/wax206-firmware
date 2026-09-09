@@ -1,4 +1,4 @@
-name: Build WAX206 256M (Professional Fix)
+name: Build WAX206 256M (Ultimate Fix)
 
 env:
   ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
@@ -25,7 +25,46 @@ jobs:
       run: |
         git clone https://github.com/openwrt/openwrt.git openwrt
 
-    - name: Update Feeds & Download Source
+    - name: Inject 256M Patch (Global Regex Search)
+      working-directory: ./openwrt
+      run: |
+        echo "==== 1. 扩容打包体积上限 ===="
+        # 寻找定义了 40960k (40M) 体积上限的 Makefile 文件
+        FILES_MK=$(find target/linux/mediatek/image -type f -name "*.mk" -exec grep -l "40960k" {} +)
+        if [ -z "$FILES_MK" ]; then
+            echo "致命错误：找不到定义了 40960k 的 mk 文件！"
+            exit 1
+        fi
+        for mk in $FILES_MK; do
+            echo "修改打包体积限制: $mk"
+            sed -i 's/40960k/256512k/g' "$mk"
+        done
+
+        echo "==== 2. 扩容底层物理分区 ===="
+        # 全局扫描含有 40M (0x2800000) 分区定义的补丁或设备树文件
+        TARGET_FILES=$(find target/linux/mediatek -type f -exec grep -l "0x2800000" {} +)
+        
+        if [ -z "$TARGET_FILES" ]; then
+            echo "致命错误：全目录扫描找不到 0x2800000 的物理分区配置文件！"
+            exit 1
+        fi
+
+        for file in $TARGET_FILES; do
+            echo "正在注入扩容代码至: $file"
+            
+            # A. 废弃 backup 分区（将其长度设为 0x0，彻底避免空间重叠报错）
+            # 正则 [[:space:]]\+ 用于兼容不同源码中任意数量的空格或 Tab
+            sed -i 's/0x2d80000[[:space:]]\+0x2800000/0x2d80000 0x0/g' "$file"
+            
+            # B. 废弃 dummy 分区（将其长度设为 0x0）
+            sed -i 's/0x5580000[[:space:]]\+0xaa80000/0x5580000 0x0/g' "$file"
+            
+            # C. 剩下的 0x2800000 就是主 firmware 分区，暴力扩充至 250MB+ (0xfa80000)
+            sed -i 's/0x2800000/0xfa80000/g' "$file"
+        done
+        echo "扩容代码完美注入！"
+
+    - name: Update Feeds & Configure
       working-directory: ./openwrt
       run: |
         ./scripts/feeds update -a
@@ -33,41 +72,6 @@ jobs:
         cp ../.config .config
         make defconfig
         make download -j8
-
-    - name: Inject 256M Patch (Core Fix)
-      working-directory: ./openwrt
-      run: |
-        echo "1. 解除打包体积限制..."
-        sed -i 's/40960k/256512k/g' target/linux/mediatek/image/mt7622.mk
-        
-        echo "2. 提前解压 Linux 内核源码 (这是之前失败的关键)..."
-        make target/linux/prepare -j$(nproc)
-        
-        echo "3. 动态寻找解压后的 DTS 并应用扩容补丁..."
-        DTS_FILE=$(find build_dir -path "*/arch/arm64/boot/dts/mediatek/mt7622-netgear-wax206.dts" | head -n 1)
-        
-        # 增加极其严格的防静默失败校验
-        if [ -z "$DTS_FILE" ]; then
-          echo "致命错误：在内核源码中找不到 WAX206 的 DTS 文件！扩容将失败！"
-          exit 1
-        fi
-        
-        echo "成功找到内核 DTS 路径: $DTS_FILE"
-        
-        # 精确替换分区边界 (去掉尖括号以防内核源码格式变动)
-        sed -i 's/0x580000 0x2800000/0x580000 0xfa80000/g' "$DTS_FILE"
-        
-        # 删除备用分区节点
-        sed -i '/partition@2d80000/,/};/d' "$DTS_FILE"
-        sed -i '/partition@5580000/,/};/d' "$DTS_FILE"
-        
-        # 终极校验：检查修改是否真的写进去了
-        if ! grep -q "0xfa80000" "$DTS_FILE"; then
-          echo "致命错误：DTS 文件修改失败！"
-          exit 1
-        fi
-        
-        echo "DTS 扩容补丁完美注入！"
 
     - name: Compile Firmware
       working-directory: ./openwrt
